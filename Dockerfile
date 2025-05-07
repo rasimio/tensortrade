@@ -1,4 +1,4 @@
-FROM python:3.11.9-slim
+FROM python:3.9.6
 
 WORKDIR /app
 
@@ -15,15 +15,20 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Установка TA-Lib
-RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
-    tar -xzf ta-lib-0.4.0-src.tar.gz && \
-    cd ta-lib/ && \
-    ./configure --prefix=/usr && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
-
+# Modify the TA-Lib installation section in your Dockerfile
+#RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
+#    tar -xzf ta-lib-0.4.0-src.tar.gz && \
+#    cd ta-lib/ && \
+#    # Use a more reliable mirror for the config files
+#    wget 'https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.guess' -O config.guess && \
+#    wget 'https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.sub' -O config.sub && \
+#    chmod +x config.guess config.sub && \
+#    # Continue with the build
+#    ./configure --prefix=/usr && \
+#    make && \
+#    make install && \
+#    cd .. && \
+#    rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
 # Копирование requirements.txt
 COPY requirements.txt .
 
