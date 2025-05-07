@@ -105,7 +105,8 @@ class TradingEnvironment(gym.Env):
 
         logger.info(f"Инициализирована торговая среда с {len(data)} точками данных и {n_features} признаками")
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Union[
+        np.ndarray, Tuple[np.ndarray, Dict]]:
         """
         Сбрасывает среду в начальное состояние.
 
@@ -114,9 +115,16 @@ class TradingEnvironment(gym.Env):
             options: Дополнительные опции
 
         Returns:
-            Tuple с наблюдением и дополнительной информацией
+            Наблюдение или кортеж с наблюдением и дополнительной информацией
         """
-        super().reset(seed=seed)
+        # Проверяем версию API
+        try:
+            # Для новых версий Gymnasium
+            super().reset(seed=seed)
+        except:
+            # Для старых версий Gym, которые не требуют параметров
+            if hasattr(super(), 'reset'):
+                super().reset()
 
         # Инициализируем индекс текущего шага
         self.current_step = self.window_size
@@ -143,9 +151,19 @@ class TradingEnvironment(gym.Env):
             "max_drawdown": self.max_drawdown
         }
 
-        return observation, info
+        # Возвращаем результат в зависимости от версии Gym
+        # Если это новая версия Gymnasium, возвращаем кортеж (observation, info)
+        # Если старая версия Gym, возвращаем только observation
+        # Проверим, какая версия используется, по наличию параметра seed
+        if seed is not None or options is not None:
+            # Новая версия Gymnasium
+            return observation, info
+        else:
+            # Старая версия Gym
+            return observation
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, action: int) -> Union[
+        Tuple[np.ndarray, float, bool, Dict], Tuple[np.ndarray, float, bool, bool, Dict]]:
         """
         Выполняет шаг в среде, применяя действие.
 
@@ -153,7 +171,7 @@ class TradingEnvironment(gym.Env):
             action: Действие (0: держать, 1: покупать, 2: продавать)
 
         Returns:
-            Tuple с наблюдением, вознаграждением, флагом завершения, флагом срезания и дополнительной информацией
+            Tuple с наблюдением, вознаграждением, флагом завершения, доп. информацией (или также с флагом truncated в новых версиях)
         """
         # Проверяем, не закончились ли данные
         if self.current_step >= len(self.data) - 1:
@@ -169,7 +187,20 @@ class TradingEnvironment(gym.Env):
                 "max_drawdown": self.max_drawdown,
                 "reason": "Данные закончились"
             }
-            return observation, reward, done, False, info
+
+            # Проверим, какая версия gymnasium используется
+            # Если определить не удается, предполагаем новую версию с truncated
+            try:
+                # Проверяем наличие метода render() с параметром mode
+                if hasattr(self, 'render') and 'mode' in self.render.__code__.co_varnames:
+                    # Старая версия Gym
+                    return observation, reward, done, info
+                else:
+                    # Новая версия Gymnasium
+                    return observation, reward, done, False, info
+            except:
+                # Предполагаем новую версию Gymnasium
+                return observation, reward, done, False, info
 
         # Текущая цена
         current_price = self._get_current_price()
@@ -278,7 +309,18 @@ class TradingEnvironment(gym.Env):
             "max_drawdown": self.max_drawdown
         }
 
-        return observation, reward, done, False, info
+        # Проверим, какая версия gymnasium используется
+        try:
+            # Проверяем наличие метода render() с параметром mode
+            if hasattr(self, 'render') and 'mode' in self.render.__code__.co_varnames:
+                # Старая версия Gym
+                return observation, reward, done, info
+            else:
+                # Новая версия Gymnasium
+                return observation, reward, done, False, info
+        except:
+            # Предполагаем новую версию Gymnasium
+            return observation, reward, done, False, info
 
     def _get_observation(self) -> np.ndarray:
         """
@@ -767,19 +809,34 @@ class RLModel(BaseModel):
 
         # Оцениваем модель
         for _ in range(n_episodes):
-            obs, info = eval_env.reset()
+            # Проверяем версию возвращаемого значения reset()
+            reset_result = eval_env.reset()
+
+            # Обрабатываем разные версии API
+            if isinstance(reset_result, tuple) and len(reset_result) == 2:
+                obs, info = reset_result
+            else:
+                obs = reset_result
+                info = {}
+
             done = False
             total_reward = 0
             step = 0
 
             while not done:
                 action, _ = self.model.predict(obs, deterministic=deterministic)
-                obs, reward, done, truncated, info = eval_env.step(action)
+                step_result = eval_env.step(action)
+
+                # Обрабатываем разные версии API (в новых версиях step возвращает 5 значений)
+                if len(step_result) == 5:
+                    obs, reward, done, truncated, info = step_result
+                    if truncated:
+                        break
+                else:  # Для совместимости со старыми версиями Gym
+                    obs, reward, done, info = step_result
+
                 total_reward += reward
                 step += 1
-
-                if truncated:
-                    break
 
             episode_rewards.append(float(total_reward))
             episode_lengths.append(step)

@@ -197,7 +197,12 @@ class HybridModel(BaseModel):
                 prediction_horizon = kwargs.get("lstm_prediction_horizon", 1)
 
                 # Используем цены закрытия с задержкой как целевую переменную
-                future_prices = data[target_column].shift(-prediction_horizon).values[:-prediction_horizon]
+                # Нормализуем целевую переменную, используя проценты изменения вместо абсолютных цен
+                price_data = data[target_column].values
+                future_prices_pct = np.zeros_like(price_data[:-prediction_horizon])
+                for i in range(len(price_data) - prediction_horizon):
+                    # Рассчитываем процент изменения цены
+                    future_prices_pct[i] = (price_data[i + prediction_horizon] / price_data[i]) - 1.0
 
                 # Разделяем данные на обучающую и валидационную выборки
                 train_size = int(len(data) * 0.8)
@@ -205,7 +210,7 @@ class HybridModel(BaseModel):
                 # Обучающие данные
                 train_data = data.iloc[:train_size].copy()
                 train_features = train_data[feature_columns].values
-                train_target = future_prices[:train_size]
+                train_target = future_prices_pct[:train_size]
 
                 # Создаем последовательности для LSTM
                 X_lstm_train, y_lstm_train = [], []
@@ -220,7 +225,7 @@ class HybridModel(BaseModel):
                 if train_size < len(data) - sequence_length:
                     val_data = data.iloc[train_size:].copy()
                     val_features = val_data[feature_columns].values
-                    val_target = future_prices[train_size:]
+                    val_target = future_prices_pct[train_size:]
 
                     X_lstm_val, y_lstm_val = [], []
                     for i in range(len(val_features) - sequence_length):
@@ -367,6 +372,13 @@ class HybridModel(BaseModel):
 
                 # Получаем прогноз
                 lstm_predictions = self.lstm_model.predict(lstm_input)
+
+                # В методе predict класса HybridModel, после строки с lstm_predictions = self.lstm_model.predict(lstm_input)
+                # добавляем передачу текущей цены
+
+                # Преобразуем прогноз процентного изменения цены в абсолютное значение
+                current_price = X[-1, 0] if len(X.shape) == 2 else X[0, -1, 0]
+                lstm_predictions = self.lstm_model.predict(lstm_input, current_price=current_price)
 
                 # Преобразуем прогноз цены в направление движения
                 if lstm_predictions.shape[0] > 0:

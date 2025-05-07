@@ -255,10 +255,18 @@ class LSTMModel(BaseModel):
                 # и преобразуем в (samples, 1, features)
                 X = X.reshape(X.shape[0], 1, X.shape[1])
 
-        # Делаем прогноз
-        predictions = self.model.predict(X, **kwargs)
+        # Делаем прогноз (относительное изменение)
+        pct_change_predictions = self.model.predict(X, **kwargs)
 
-        return predictions
+        # Если передан текущий курс, преобразуем относительное изменение в абсолютную цену
+        current_price = kwargs.get('current_price', None)
+        if current_price is not None:
+            # Преобразуем процентное изменение обратно в абсолютную цену
+            absolute_predictions = current_price * (1 + pct_change_predictions)
+            return absolute_predictions
+
+        # Иначе возвращаем процентное изменение
+        return pct_change_predictions
 
     def predict_sequence(
             self,
