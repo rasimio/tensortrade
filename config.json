@@ -1,0 +1,61 @@
+{
+    "api_key": "",
+    "api_secret": "",
+    "use_testnet": true,
+    "symbol": "BTCUSDT",
+    "interval": "1h",
+    "data_start_date": "2023-01-01",
+    "data_end_date": "2023-12-31",
+    "data_dir": "data",
+    "models_dir": "models",
+    "output_dir": "output",
+    "initial_balance": 10000.0,
+    "fee": 0.001,
+    "slippage": 0.0005,
+    "position_size": 0.1,
+    "stop_loss": 0.02,
+    "take_profit": 0.05,
+    "leverage": 1.0,
+    "allow_short": true,
+    "model_type": "hybrid",
+    "model_params": {
+        "lstm_params": {
+            "lstm_units": 100,
+            "dense_units": 64,
+            "dropout_rate": 0.2,
+            "learning_rate": 0.001,
+            "batch_size": 32,
+            "epochs": 100,
+            "sequence_length": 60
+        },
+        "rl_params": {
+            "algorithm": "ppo",
+            "policy": "MlpPolicy",
+            "learning_rate": 0.0003,
+            "gamma": 0.99,
+            "batch_size": 64,
+            "env_params": {
+                "fee": 0.001,
+                "initial_balance": 10000.0,
+                "max_position": 1,
+                "reward_scaling": 1.0
+            }
+        },
+        "technical_params": {
+            "classifier": "rf",
+            "signal_threshold": 0.5,
+            "strategy": "combined",
+            "feature_importance": true,
+            "n_estimators": 100,
+            "max_depth": 10
+        },
+        "alpha": 0.3,
+        "beta": 0.4,
+        "gamma": 0.3,
+        "decision_threshold": 0.5
+    },
+    "wss_server": {
+        "host": "localhost",
+        "port": 8765
+    }
+}
