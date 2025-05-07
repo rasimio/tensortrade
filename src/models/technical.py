@@ -154,7 +154,15 @@ class TechnicalModel(BaseModel):
         exclude_columns.extend(['open', 'high', 'low', 'close', 'volume'])
 
         # Предполагаем, что целевые колонки уже созданы ('buy_signal', 'sell_signal', 'hold_signal')
+        # Выбираем только числовые колонки для признаков
         feature_columns = [col for col in data_with_signals.columns if col not in exclude_columns]
+
+        # Дополнительная проверка: оставляем только числовые признаки
+        numeric_columns = data_with_signals[feature_columns].select_dtypes(include=['number']).columns.tolist()
+        if len(numeric_columns) < len(feature_columns):
+            logger.warning(
+                f"Обнаружены нечисловые признаки. Использую только числовые: {len(numeric_columns)} из {len(feature_columns)}")
+            feature_columns = numeric_columns
 
         # Создаем мультиклассовую целевую переменную
         # 0 - держать, 1 - покупать, 2 - продавать
@@ -162,20 +170,21 @@ class TechnicalModel(BaseModel):
         y[data_with_signals['buy_signal'] == 1] = 1
         y[data_with_signals['sell_signal'] == 1] = 2
 
-        # Выбираем признаки
+        # Выбираем признаки (только числовые)
         X = data_with_signals[feature_columns].values
 
         # Сохраняем имена признаков
         self.feature_names = feature_columns
 
         # Удаляем строки с NaN
-        mask = ~np.isnan(X).any(axis=1) & ~np.isnan(y)
+        mask = ~np.isnan(X).any(axis=1)
         X = X[mask]
         y = y[mask]
 
         logger.info(f"Подготовлены данные: {X.shape[0]} образцов, {X.shape[1]} признаков")
 
         return X, y
+
 
     def train(
             self,
