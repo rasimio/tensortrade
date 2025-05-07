@@ -98,6 +98,35 @@ class BaseModel(ABC):
         # Создаем директорию, если она не существует
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
+        # Для гибридной модели нужно сохранить все подмодели
+        if self.__class__.__name__ == 'HybridModel':
+            hybrid_components = {}
+
+            # Сохраняем состояние подмоделей, если они существуют и обучены
+            if hasattr(self, 'lstm_model') and self.lstm_model is not None and self.lstm_model.is_trained:
+                hybrid_components['lstm_model'] = {
+                    "model": self.lstm_model.model,
+                    "is_trained": self.lstm_model.is_trained,
+                    "feature_names": self.lstm_model.feature_names
+                }
+
+            if hasattr(self, 'rl_model') and self.rl_model is not None and self.rl_model.is_trained:
+                hybrid_components['rl_model'] = {
+                    "model": self.rl_model.model,
+                    "is_trained": self.rl_model.is_trained,
+                    "feature_names": self.rl_model.feature_names
+                }
+
+            if hasattr(self,
+                       'technical_model') and self.technical_model is not None and self.technical_model.is_trained:
+                hybrid_components['technical_model'] = {
+                    "model": self.technical_model.model,
+                    "is_trained": self.technical_model.is_trained,
+                    "feature_names": self.technical_model.feature_names
+                }
+        else:
+            hybrid_components = None
+
         # Словарь для сохранения
         save_dict = {
             "model": self.model,
@@ -107,14 +136,17 @@ class BaseModel(ABC):
             "target_name": self.target_name,
             "is_trained": self.is_trained,
             "metadata": self.metadata,
-            "model_type": self.__class__.__name__
+            "model_type": self.__class__.__name__,
+            "hybrid_components": hybrid_components
         }
 
         # Сохраняем модель
-        with open(path, 'wb') as f:
-            pickle.dump(save_dict, f)
-
-        logger.info(f"Модель {self.name} сохранена в {path}")
+        try:
+            with open(path, 'wb') as f:
+                pickle.dump(save_dict, f)
+            logger.info(f"Модель {self.name} сохранена в {path}")
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении модели {self.name}: {e}")
 
     @classmethod
     def load(cls, path: str) -> 'BaseModel':
@@ -127,26 +159,60 @@ class BaseModel(ABC):
         Returns:
             Экземпляр загруженной модели
         """
-        # Загружаем модель из файла
-        with open(path, 'rb') as f:
-            save_dict = pickle.load(f)
+        try:
+            # Загружаем модель из файла
+            with open(path, 'rb') as f:
+                save_dict = pickle.load(f)
 
-        # Создаем экземпляр модели
-        model_instance = cls(
-            name=save_dict.get("name", "loaded_model"),
-            model_params=save_dict.get("model_params", {})
-        )
+            # Создаем экземпляр модели
+            model_instance = cls(
+                name=save_dict.get("name", "loaded_model"),
+                model_params=save_dict.get("model_params", {})
+            )
 
-        # Восстанавливаем атрибуты
-        model_instance.model = save_dict.get("model")
-        model_instance.feature_names = save_dict.get("feature_names")
-        model_instance.target_name = save_dict.get("target_name")
-        model_instance.is_trained = save_dict.get("is_trained", False)
-        model_instance.metadata = save_dict.get("metadata", {})
+            # Восстанавливаем атрибуты
+            model_instance.model = save_dict.get("model")
+            model_instance.feature_names = save_dict.get("feature_names")
+            model_instance.target_name = save_dict.get("target_name")
+            model_instance.is_trained = save_dict.get("is_trained", False)
+            model_instance.metadata = save_dict.get("metadata", {})
 
-        logger.info(f"Модель {model_instance.name} загружена из {path}")
+            # Проверяем, есть ли компоненты гибридной модели
+            hybrid_components = save_dict.get("hybrid_components", None)
 
-        return model_instance
+            # Если это гибридная модель и есть компоненты
+            if cls.__name__ == 'HybridModel' and hybrid_components:
+                # Сначала строим пустые подмодели
+                model_instance.build()
+
+                # Восстанавливаем LSTM модель, если есть
+                if 'lstm_model' in hybrid_components and model_instance.lstm_model is not None:
+                    model_instance.lstm_model.model = hybrid_components['lstm_model'].get('model')
+                    model_instance.lstm_model.is_trained = hybrid_components['lstm_model'].get('is_trained', False)
+                    model_instance.lstm_model.feature_names = hybrid_components['lstm_model'].get('feature_names')
+
+                # Восстанавливаем RL модель, если есть
+                if 'rl_model' in hybrid_components and model_instance.rl_model is not None:
+                    model_instance.rl_model.model = hybrid_components['rl_model'].get('model')
+                    model_instance.rl_model.is_trained = hybrid_components['rl_model'].get('is_trained', False)
+                    model_instance.rl_model.feature_names = hybrid_components['rl_model'].get('feature_names')
+
+                # Восстанавливаем техническую модель, если есть
+                if 'technical_model' in hybrid_components and model_instance.technical_model is not None:
+                    model_instance.technical_model.model = hybrid_components['technical_model'].get('model')
+                    model_instance.technical_model.is_trained = hybrid_components['technical_model'].get('is_trained',
+                                                                                                         False)
+                    model_instance.technical_model.feature_names = hybrid_components['technical_model'].get(
+                        'feature_names')
+
+            logger.info(f"Модель {model_instance.name} загружена из {path}")
+
+            return model_instance
+
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке модели из {path}: {e}")
+            # Возвращаем пустую модель
+            return cls(name="error_loading_model")
 
     def set_feature_names(self, feature_names: List[str]) -> None:
         """

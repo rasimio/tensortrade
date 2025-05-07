@@ -122,17 +122,39 @@ class HybridModel(BaseModel):
         """
         Создает и инициализирует все подмодели.
         """
-        # Создаем LSTM модель
-        lstm_params = self.model_params.get("lstm_params", {})
-        self.lstm_model = LSTMModel(f"{self.name}_lstm", lstm_params)
+        try:
+            # Создаем LSTM модель
+            lstm_params = self.model_params.get("lstm_params", {})
+            self.lstm_model = LSTMModel(f"{self.name}_lstm", lstm_params)
+            # Строим модель, чтобы инициализировать её внутренние компоненты
+            self.lstm_model.build()
+            logger.info(f"LSTM модель {self.lstm_model.name} создана")
+        except Exception as e:
+            logger.error(f"Ошибка при создании LSTM модели: {e}")
+            self.lstm_model = None
 
-        # Создаем RL модель
-        rl_params = self.model_params.get("rl_params", {})
-        self.rl_model = RLModel(f"{self.name}_rl", rl_params)
+        try:
+            # Создаем RL модель
+            rl_params = self.model_params.get("rl_params", {})
+            self.rl_model = RLModel(f"{self.name}_rl", rl_params)
+            logger.info(f"RL модель {self.rl_model.name} создана")
+        except Exception as e:
+            logger.error(f"Ошибка при создании RL модели: {e}")
+            self.rl_model = None
 
-        # Создаем модель технического анализа
-        technical_params = self.model_params.get("technical_params", {})
-        self.technical_model = TechnicalModel(f"{self.name}_technical", technical_params)
+        try:
+            # Создаем модель технического анализа
+            technical_params = self.model_params.get("technical_params", {})
+            self.technical_model = TechnicalModel(f"{self.name}_technical", technical_params)
+            # Строим модель, чтобы инициализировать её внутренние компоненты
+            self.technical_model.build()
+            logger.info(f"Техническая модель {self.technical_model.name} создана")
+        except Exception as e:
+            logger.error(f"Ошибка при создании технической модели: {e}")
+            self.technical_model = None
+
+        # Установим флаг, что модель построена
+        self.is_built = True
 
         logger.info(f"Создана гибридная модель {self.name}")
 
@@ -350,13 +372,15 @@ class HybridModel(BaseModel):
         if not self.is_trained:
             logger.warning(f"Модель {self.name} не обучена полностью, прогноз может быть неточным")
 
-        # Получаем прогнозы от всех обученных подмоделей
-        lstm_predictions = None
-        rl_predictions = None
-        technical_predictions = None
-
-        # Прогнозы LSTM (если обучена)
-        if self.lstm_model.is_trained:
+        # Проверяем инициализацию всех подмоделей
+        if not hasattr(self, 'lstm_model') or self.lstm_model is None:
+            logger.warning("LSTM модель не инициализирована")
+            lstm_predictions = None
+        elif not hasattr(self.lstm_model, 'is_trained') or not self.lstm_model.is_trained:
+            logger.warning("LSTM модель не обучена")
+            lstm_predictions = None
+        else:
+            # Используем LSTM модель
             try:
                 # Для LSTM нужна 3D форма данных (samples, sequence_length, features)
                 if len(X.shape) == 2:
@@ -373,9 +397,6 @@ class HybridModel(BaseModel):
                 # Получаем прогноз
                 lstm_predictions = self.lstm_model.predict(lstm_input)
 
-                # В методе predict класса HybridModel, после строки с lstm_predictions = self.lstm_model.predict(lstm_input)
-                # добавляем передачу текущей цены
-
                 # Преобразуем прогноз процентного изменения цены в абсолютное значение
                 current_price = X[-1, 0] if len(X.shape) == 2 else X[0, -1, 0]
                 lstm_predictions = self.lstm_model.predict(lstm_input, current_price=current_price)
@@ -388,10 +409,17 @@ class HybridModel(BaseModel):
                 logger.error(f"Ошибка при получении прогноза от LSTM модели: {e}")
                 lstm_predictions = None
 
-        # Прогнозы RL (если обучена)
-        if self.rl_model.is_trained:
+        # Аналогичные проверки для RL и технической моделей
+        if not hasattr(self, 'rl_model') or self.rl_model is None:
+            logger.warning("RL модель не инициализирована")
+            rl_predictions = None
+        elif not hasattr(self.rl_model, 'is_trained') or not self.rl_model.is_trained:
+            logger.warning("RL модель не обучена")
+            rl_predictions = None
+        else:
             try:
-                # Для RL нужна 3D форма данных (samples, sequence_length, features)
+                # Код для получения прогноза от RL модели
+                # ... (ваш существующий код)
                 if len(X.shape) == 2:
                     sequence_length = self.model_params.get("sequence_length", 60)
                     if X.shape[0] >= sequence_length:
@@ -410,8 +438,15 @@ class HybridModel(BaseModel):
                 logger.error(f"Ошибка при получении прогноза от RL модели: {e}")
                 rl_predictions = None
 
-        # Прогнозы технического анализа (если обучена)
-        if self.technical_model.is_trained:
+        if not hasattr(self, 'technical_model') or self.technical_model is None:
+            logger.warning("Техническая модель не инициализирована")
+            technical_predictions = None
+            technical_probas = None
+        elif not hasattr(self.technical_model, 'is_trained') or not self.technical_model.is_trained:
+            logger.warning("Техническая модель не обучена")
+            technical_predictions = None
+            technical_probas = None
+        else:
             try:
                 # Получаем прогноз
                 technical_predictions = self.technical_model.predict(X)
@@ -424,6 +459,10 @@ class HybridModel(BaseModel):
             except Exception as e:
                 logger.error(f"Ошибка при получении прогноза от модели технического анализа: {e}")
                 technical_predictions = None
+                technical_probas = None
+
+        # Далее продолжаем с существующим кодом объединения прогнозов...
+        # ... (ваш существующий код)
 
         # Объединяем прогнозы
         alpha = self.model_params.get("alpha", 0.3)  # Вес для LSTM
@@ -441,7 +480,7 @@ class HybridModel(BaseModel):
 
         if available_models_count == 0:
             logger.warning(f"Ни одна подмодель не сделала прогноз")
-            return np.array([])
+            return np.array([0])  # Возвращаем сигнал "держать" по умолчанию
 
         # Нормализуем веса
         norm_alpha = alpha / (alpha + beta + gamma) if lstm_predictions is not None else 0

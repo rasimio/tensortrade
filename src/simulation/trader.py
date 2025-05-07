@@ -663,17 +663,24 @@ class LiveTrader:
             Функция стратегии
         """
 
-        def strategy(data: Dict) -> int:
+        def strategy(data: Dict, simulator: MarketSimulator) -> None:
             """
             Стратегия на основе модели.
 
             Args:
                 data: Данные тика
-
-            Returns:
-                Сигнал (0: держать, 1: покупать, 2: продавать)
+                simulator: Симулятор рынка
             """
             try:
+                # Проверяем, что модель существует и обучена
+                if self.model is None:
+                    logger.warning("Модель не инициализирована")
+                    return
+
+                if not hasattr(self.model, 'is_trained') or not self.model.is_trained:
+                    logger.warning("Модель не обучена")
+                    return
+
                 # Получаем признаки для модели
                 features = np.array([
                     data.get('open', data['close']),
@@ -683,20 +690,24 @@ class LiveTrader:
                     data.get('volume', 0.0)
                 ]).reshape(1, -1)
 
-                # Делаем прогноз
-                prediction = self.model.predict(features)
+                # Делаем прогноз с обработкой исключений
+                try:
+                    prediction = self.model.predict(features)
+                except Exception as predict_error:
+                    logger.error(f"Ошибка при прогнозировании: {predict_error}")
+                    return
 
                 # Преобразуем прогноз в действие
                 if isinstance(prediction, np.ndarray):
                     if prediction.size > 1:
                         # Если прогноз - массив классов или вероятностей
-                        action = np.argmax(prediction)  # 0: держать, 1: покупать, 2: продавать
+                        action = np.argmax(prediction) - 1  # -1: продать, 0: держать, 1: купить
                     else:
                         # Если прогноз - скаляр
                         if prediction > threshold:
                             action = 1  # купить
                         elif prediction < -threshold:
-                            action = 2  # продать
+                            action = -1  # продать
                         else:
                             action = 0  # держать
                 else:
@@ -704,15 +715,22 @@ class LiveTrader:
                     if prediction > threshold:
                         action = 1  # купить
                     elif prediction < -threshold:
-                        action = 2  # продать
+                        action = -1  # продать
                     else:
                         action = 0  # держать
 
-                return action
+                # Выполняем действие
+                if action == 1:
+                    # Сигнал на покупку
+                    if simulator.position <= 0:
+                        simulator.buy()
+                elif action == -1:
+                    # Сигнал на продажу
+                    if simulator.position >= 0:
+                        simulator.sell()
 
             except Exception as e:
                 logger.error(f"Ошибка при выполнении стратегии на основе модели: {e}")
-                return 0  # держать по умолчанию
 
         return strategy
 
