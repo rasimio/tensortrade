@@ -1,7 +1,7 @@
 # Editors
 .vscode/
 .idea/
-
+data
 # Vagrant
 .vagrant/
 
