@@ -1,0 +1,30 @@
+# Data processing and analysis
+numpy
+pandas
+scipy
+
+# Machine learning
+scikit-learn
+tensorflow
+
+# Technical analysis
+ta-lib  # Note: Requires separate C library installation
+
+# Web and API
+websockets
+requests
+
+# Visualization
+matplotlib
+seaborn
+
+# Trading API (if needed)
+python-binance
+
+# Reinforcement learning
+gymnasium
+stable-baselines3
+
+# Utilities
+tqdm
+PyYAML

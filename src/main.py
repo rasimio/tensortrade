@@ -184,6 +184,7 @@ class TensorTrade:
             DataFrame с собранными данными
         """
         # Получаем параметры из конфигурации, если не переданы
+        print("collecting..")
         symbol = symbol or self.config.get("symbol", "BTCUSDT")
         interval = interval or self.config.get("interval", "1h")
         start_date = start_date or self.config.get("data_start_date", "2023-01-01")

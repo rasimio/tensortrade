@@ -368,12 +368,8 @@ class BacktestEngine:
                         'entry_price': entry_price,
                         'exit_price': effective_price,
                         'position': position,
-                        'profit_loss': (position > 0) ?
-                    (sale_value - (position * entry_price)):
-                    ((entry_price * abs(position)) - buy_value),
-                    'profit_loss_pct': (position > 0) ?
-                    ((effective_price - entry_price) / entry_price * 100):
-                    ((entry_price - effective_price) / entry_price * 100)
+                        'profit_loss': sale_value - (position * entry_price) if position > 0 else (entry_price * abs(position)) - buy_value,
+                        'profit_loss_pct': ((effective_price - entry_price) / entry_price * 100) if position > 0 else ((entry_price - effective_price) / entry_price * 100)
                     })
 
                     # Обнуляем позицию
