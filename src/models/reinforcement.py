@@ -160,7 +160,7 @@ class TradingEnvironment(gym.Env):
             return observation, info
         else:
             # Старая версия Gym
-            return observation
+            return observation, info
 
     def step(self, action: int) -> Union[
         Tuple[np.ndarray, float, bool, Dict], Tuple[np.ndarray, float, bool, bool, Dict]]:
@@ -194,7 +194,7 @@ class TradingEnvironment(gym.Env):
                 # Проверяем наличие метода render() с параметром mode
                 if hasattr(self, 'render') and 'mode' in self.render.__code__.co_varnames:
                     # Старая версия Gym
-                    return observation, reward, done, info
+                    return observation, reward, done, False, info
                 else:
                     # Новая версия Gymnasium
                     return observation, reward, done, False, info
@@ -314,7 +314,7 @@ class TradingEnvironment(gym.Env):
             # Проверяем наличие метода render() с параметром mode
             if hasattr(self, 'render') and 'mode' in self.render.__code__.co_varnames:
                 # Старая версия Gym
-                return observation, reward, done, info
+                return observation, reward, done, False, info
             else:
                 # Новая версия Gymnasium
                 return observation, reward, done, False, info
