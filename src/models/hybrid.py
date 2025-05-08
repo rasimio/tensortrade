@@ -209,14 +209,10 @@ class HybridModel(BaseModel):
 
             # Подготавливаем данные для LSTM
             if kwargs.get("train_lstm", True):
-
                 logger.info(f"Подготовка данных для обучения LSTM модели")
 
-                # Ограничиваем количество признаков для LSTM модели (например, до 5)
-                lstm_feature_columns = feature_columns[:5] if len(feature_columns) > 5 else feature_columns
-
                 # Устанавливаем имена признаков для LSTM модели
-                self.lstm_model.set_feature_names(lstm_feature_columns)
+                self.lstm_model.set_feature_names(feature_columns)
 
                 # Подготавливаем последовательности для LSTM
                 sequence_length = self.model_params.get("sequence_length", 60)
@@ -250,6 +246,9 @@ class HybridModel(BaseModel):
                 X_lstm_train = np.array(X_lstm_train)
                 y_lstm_train = np.array(y_lstm_train)
 
+                # Проверим размерности
+                logger.info(f"Размерности данных для LSTM: X_train={X_lstm_train.shape}, y_train={y_lstm_train.shape}")
+
                 # Валидационные данные
                 if train_size < len(data) - sequence_length:
                     val_data = data.iloc[train_size:].copy()
@@ -263,6 +262,9 @@ class HybridModel(BaseModel):
 
                     X_lstm_val = np.array(X_lstm_val)
                     y_lstm_val = np.array(y_lstm_val)
+
+                    logger.info(
+                        f"Размерности валидационных данных для LSTM: X_val={X_lstm_val.shape}, y_val={y_lstm_val.shape}")
                 else:
                     X_lstm_val, y_lstm_val = None, None
 
@@ -296,7 +298,8 @@ class HybridModel(BaseModel):
             logger.info(f"Обучение LSTM модели")
 
             # Устанавливаем имена признаков
-            self.lstm_model.set_feature_names(self.feature_names)
+            if self.feature_names is not None:
+                self.lstm_model.set_feature_names(self.feature_names)
 
             # Обучаем модель
             lstm_metrics = self.lstm_model.train(
@@ -311,7 +314,8 @@ class HybridModel(BaseModel):
             logger.info(f"Обучение RL модели")
 
             # Устанавливаем имена признаков
-            self.rl_model.set_feature_names(self.feature_names)
+            if self.feature_names is not None:
+                self.rl_model.set_feature_names(self.feature_names)
 
             # Обучаем модель
             rl_metrics = self.rl_model.train(
@@ -328,7 +332,8 @@ class HybridModel(BaseModel):
             logger.info(f"Обучение модели технического анализа")
 
             # Устанавливаем имена признаков
-            self.technical_model.set_feature_names(self.feature_names)
+            if self.feature_names is not None:
+                self.technical_model.set_feature_names(self.feature_names)
 
             # Обучаем модель
             technical_metrics = self.technical_model.train(

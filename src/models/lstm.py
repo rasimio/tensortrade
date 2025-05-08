@@ -66,7 +66,6 @@ class LSTMModel(BaseModel):
         # Флаг для отслеживания, построена ли модель
         self.is_built = False
 
-    # Исправление для src/models/lstm.py
     def build(self) -> None:
         """
         Строит модель с заданными параметрами.
@@ -80,7 +79,7 @@ class LSTMModel(BaseModel):
         input_shape = (sequence_length, features_count)
 
         # Проверка и логирование количества признаков
-        logger.info(f"Строится LSTM модель с {features_count} признаками")
+        logger.info(f"Строится LSTM модель с {features_count} признаками и входной формой {input_shape}")
 
         model = Sequential()
 
@@ -91,7 +90,6 @@ class LSTMModel(BaseModel):
             input_shape=input_shape,
             stateful=self.model_params.get("stateful", False)
         ))
-        # Остальная часть метода остается без изменений...
         model.add(BatchNormalization())
         model.add(Dropout(self.model_params.get("dropout_rate", 0.2)))
 
@@ -174,6 +172,22 @@ class LSTMModel(BaseModel):
                 if X_val is not None:
                     X_val = X_val.reshape(X_val.shape[0], 1, X_val.shape[1])
 
+        # Проверяем соответствие размерности входных данных и модели
+        expected_features = self.model.input_shape[-1]
+        actual_features = X_train.shape[-1]
+
+        if expected_features != actual_features:
+            logger.warning(f"Несоответствие размерности признаков: ожидается {expected_features}, получено {actual_features}")
+            logger.warning("Перестраиваем модель с правильной размерностью...")
+
+            # Обновляем количество признаков
+            if self.feature_names is None or len(self.feature_names) != actual_features:
+                self.feature_names = [f"feature_{i}" for i in range(actual_features)]
+
+            # Перестраиваем модель
+            self.is_built = False
+            self.build()
+
         # Проверяем размерность целевых значений
         if len(y_train.shape) > 2:
             logger.warning(
@@ -204,6 +218,9 @@ class LSTMModel(BaseModel):
 
         # Обучаем модель
         logger.info(f"Начинаем обучение модели {self.name}")
+        logger.info(f"Размерности входных данных: X_train={X_train.shape}, y_train={y_train_scaled.shape}")
+        if validation_data:
+            logger.info(f"Размерности валидационных данных: X_val={X_val.shape}, y_val={y_val_scaled.shape}")
 
         history = self.model.fit(
             X_train, y_train_scaled,
@@ -252,8 +269,6 @@ class LSTMModel(BaseModel):
             "val_metrics": self.metadata.get("val_metrics", {})
         }
 
-    # Исправление для src/models/lstm.py
-
     def predict(self, X: np.ndarray, **kwargs) -> np.ndarray:
         """
         Делает прогнозы на основе входных данных.
@@ -278,6 +293,23 @@ class LSTMModel(BaseModel):
                 # Если это 2D массив, предполагаем, что это (samples, features)
                 # и преобразуем в (samples, 1, features)
                 X = X.reshape(X.shape[0], 1, X.shape[1])
+
+        # Проверяем соответствие размерности входных данных и модели
+        expected_features = self.model.input_shape[-1]
+        actual_features = X.shape[-1]
+
+        if expected_features != actual_features:
+            logger.warning(f"Несоответствие размерности признаков при прогнозировании: ожидается {expected_features}, получено {actual_features}")
+            # Пытаемся подогнать размерность
+            if actual_features > expected_features:
+                logger.warning(f"Обрезаем лишние признаки")
+                # Обрезаем лишние признаки
+                X = X[:, :, :expected_features]
+            else:
+                logger.warning(f"Добавляем недостающие признаки (заполняем нулями)")
+                # Добавляем недостающие признаки
+                padding = np.zeros((X.shape[0], X.shape[1], expected_features - actual_features))
+                X = np.concatenate([X, padding], axis=2)
 
         # Делаем прогноз (относительное изменение)
         scaled_predictions = self.model.predict(X, **{k: v for k, v in kwargs.items()
@@ -339,6 +371,23 @@ class LSTMModel(BaseModel):
                 # Если это 1D массив, предполагаем, что это (sequence_length,)
                 # и преобразуем в (1, sequence_length, 1)
                 sequence = sequence.reshape(1, sequence.shape[0], 1)
+
+        # Проверяем соответствие размерности входных данных и модели
+        expected_features = self.model.input_shape[-1]
+        actual_features = sequence.shape[-1]
+
+        if expected_features != actual_features:
+            logger.warning(f"Несоответствие размерности признаков при прогнозировании последовательности: ожидается {expected_features}, получено {actual_features}")
+            # Пытаемся подогнать размерность
+            if actual_features > expected_features:
+                logger.warning(f"Обрезаем лишние признаки")
+                # Обрезаем лишние признаки
+                sequence = sequence[:, :, :expected_features]
+            else:
+                logger.warning(f"Добавляем недостающие признаки (заполняем нулями)")
+                # Добавляем недостающие признаки
+                padding = np.zeros((sequence.shape[0], sequence.shape[1], expected_features - actual_features))
+                sequence = np.concatenate([sequence, padding], axis=2)
 
         # Получаем параметры последовательности
         seq_length = sequence.shape[1]
