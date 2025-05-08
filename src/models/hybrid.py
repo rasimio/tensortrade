@@ -209,7 +209,14 @@ class HybridModel(BaseModel):
 
             # Подготавливаем данные для LSTM
             if kwargs.get("train_lstm", True):
+
                 logger.info(f"Подготовка данных для обучения LSTM модели")
+
+                # Ограничиваем количество признаков для LSTM модели (например, до 5)
+                lstm_feature_columns = feature_columns[:5] if len(feature_columns) > 5 else feature_columns
+
+                # Устанавливаем имена признаков для LSTM модели
+                self.lstm_model.set_feature_names(lstm_feature_columns)
 
                 # Подготавливаем последовательности для LSTM
                 sequence_length = self.model_params.get("sequence_length", 60)

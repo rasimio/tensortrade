@@ -66,13 +66,16 @@ class LSTMModel(BaseModel):
         # Флаг для отслеживания, построена ли модель
         self.is_built = False
 
+    # Исправление для src/models/lstm.py
     def build(self) -> None:
         """
         Строит модель с заданными параметрами.
         """
         sequence_length = self.model_params.get("sequence_length", 60)
-        features_count = len(
-            self.feature_names) if self.feature_names is not None else 5  # Значение по умолчанию 5 вместо 92
+
+        # Важное исправление: устанавливаем правильное количество признаков
+        # По умолчанию используем 5 признаков, если не указаны имена признаков
+        features_count = len(self.feature_names) if self.feature_names is not None else 5
 
         input_shape = (sequence_length, features_count)
 
@@ -88,6 +91,7 @@ class LSTMModel(BaseModel):
             input_shape=input_shape,
             stateful=self.model_params.get("stateful", False)
         ))
+        # Остальная часть метода остается без изменений...
         model.add(BatchNormalization())
         model.add(Dropout(self.model_params.get("dropout_rate", 0.2)))
 
