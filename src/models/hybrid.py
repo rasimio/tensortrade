@@ -366,6 +366,9 @@ class HybridModel(BaseModel):
 
     # Исправление для src/models/hybrid.py
 
+    # src/models/hybrid.py
+    # Исправленный метод predict
+
     def predict(self, X: np.ndarray, return_probabilities: bool = False, **kwargs) -> Union[
         np.ndarray, Tuple[np.ndarray, Dict]]:
         """
@@ -387,34 +390,51 @@ class HybridModel(BaseModel):
             # Создаем временный DataFrame с базовыми признаками
             temp_df = pd.DataFrame(X, columns=['open', 'high', 'low', 'close', 'volume'])
 
-            # Генерируем технические индикаторы
-            from src.data.features import TechnicalAnalysis
-            tech_analyzer = TechnicalAnalysis()
+            # Проверяем на NaN значения перед обработкой
+            if temp_df.isna().any().any():
+                # Заполняем NaN значения
+                temp_df = temp_df.fillna(method='ffill').fillna(method='bfill')
 
-            # Вначале добавляем основные признаки цены
-            temp_df = tech_analyzer.add_price_features(temp_df)
+                # Если всё ещё есть NaN значения (например, все значения в столбце NaN)
+                if temp_df.isna().any().any():
+                    # Заполняем оставшиеся NaN нулями
+                    temp_df = temp_df.fillna(0)
 
-            # Затем добавляем признаки импульса
-            temp_df = tech_analyzer.add_momentum_features(temp_df)
+            try:
+                # Генерируем технические индикаторы
+                from src.data.features import TechnicalAnalysis
+                tech_analyzer = TechnicalAnalysis()
 
-            # Добавляем признаки волатильности
-            temp_df = tech_analyzer.add_volatility_features(temp_df)
+                # Вначале добавляем основные признаки цены
+                temp_df = tech_analyzer.add_price_features(temp_df)
 
-            # Добавляем технические индикаторы
-            temp_df = tech_analyzer.add_technical_indicators(temp_df)
+                # Затем добавляем признаки импульса
+                temp_df = tech_analyzer.add_momentum_features(temp_df)
 
-            # Удаляем строки с NaN, которые могут появиться при вычислении индикаторов
-            temp_df = temp_df.dropna()
+                # Добавляем признаки волатильности
+                temp_df = tech_analyzer.add_volatility_features(temp_df)
 
-            # Если после удаления NaN данных не осталось, возвращаем значение по умолчанию
-            if len(temp_df) == 0:
-                logger.warning("После генерации технических индикаторов не осталось валидных данных")
-                return np.array([0]) if not return_probabilities else (np.array([0]), {})
+                # Добавляем технические индикаторы
+                temp_df = tech_analyzer.add_technical_indicators(temp_df)
 
-            # Выбираем последнюю строку с вычисленными признаками
-            enhanced_X = temp_df.iloc[-1:].values
+                # Обработка NaN значений, возникших при вычислении индикаторов
+                # Заполняем NaN значения предыдущими значениями или нулями
+                temp_df = temp_df.fillna(method='ffill').fillna(0)
 
-            logger.info(f"Сгенерированы технические индикаторы, получено {enhanced_X.shape[1]} признаков")
+                # Если после обработки данных не осталось, используем исходные данные
+                if len(temp_df) == 0:
+                    logger.warning(
+                        "После генерации технических индикаторов не осталось валидных данных, использую исходные данные")
+                    enhanced_X = X
+                else:
+                    # Выбираем последнюю строку с вычисленными признаками
+                    enhanced_X = temp_df.iloc[-1:].values
+                    logger.info(f"Сгенерированы технические индикаторы, получено {enhanced_X.shape[1]} признаков")
+
+            except Exception as e:
+                logger.error(f"Ошибка при генерации технических индикаторов: {str(e)}")
+                # В случае ошибки используем исходные данные
+                enhanced_X = X
 
             # Используем расширенный набор признаков для LSTM модели
             lstm_predictions = None
@@ -424,23 +444,25 @@ class HybridModel(BaseModel):
                     sequence_length = self.model_params.get("sequence_length", 60)
 
                     # Если данных недостаточно для последовательности, дублируем последнюю строку
-                    if enhanced_X.shape[0] < sequence_length:
-                        # Создаем последовательность из одинаковых строк для демонстрационных целей
-                        lstm_input = np.repeat(enhanced_X, sequence_length, axis=0)
-                        lstm_input = lstm_input.reshape(1, sequence_length, enhanced_X.shape[1])
-                    else:
-                        lstm_input = enhanced_X.reshape(1, enhanced_X.shape[0], enhanced_X.shape[1])
+                    if isinstance(enhanced_X, np.ndarray) and enhanced_X.ndim == 2:
+                        # Убедимся, что у нас есть хотя бы один ряд данных
+                        if enhanced_X.shape[0] < sequence_length:
+                            # Создаем последовательность из одинаковых строк для демонстрационных целей
+                            lstm_input = np.repeat(enhanced_X, sequence_length, axis=0)
+                            lstm_input = lstm_input.reshape(1, sequence_length, enhanced_X.shape[1])
+                        else:
+                            lstm_input = enhanced_X.reshape(1, enhanced_X.shape[0], enhanced_X.shape[1])
 
-                    # Получаем прогноз
-                    lstm_predictions = self.lstm_model.predict(lstm_input)
+                        # Получаем прогноз
+                        lstm_predictions = self.lstm_model.predict(lstm_input)
 
-                    # Преобразуем прогноз в направление движения
-                    if lstm_predictions.shape[0] > 0:
-                        # Просто определяем положительное или отрицательное изменение
-                        lstm_predictions = (lstm_predictions > 0).astype(int)  # 1 - рост, 0 - падение
+                        # Преобразуем прогноз в направление движения
+                        if lstm_predictions.shape[0] > 0:
+                            # Просто определяем положительное или отрицательное изменение
+                            lstm_predictions = (lstm_predictions > 0).astype(int)  # 1 - рост, 0 - падение
 
                 except Exception as e:
-                    logger.error(f"Ошибка при получении прогноза от LSTM модели: {e}")
+                    logger.error(f"Ошибка при получении прогноза от LSTM модели: {str(e)}")
                     lstm_predictions = None
         else:
             # Если входные данные не подходят для генерации технических индикаторов,
@@ -472,18 +494,27 @@ class HybridModel(BaseModel):
                         lstm_predictions = (lstm_predictions > 0).astype(int)  # 1 - рост, 0 - падение
 
                 except Exception as e:
-                    logger.error(f"Ошибка при получении прогноза от LSTM модели: {e}")
+                    logger.error(f"Ошибка при получении прогноза от LSTM модели: {str(e)}")
                     lstm_predictions = None
 
-        # Далее оставляем код без изменений...
         # Получаем прогноз от RL модели
         rl_predictions = None
         if hasattr(self, 'rl_model') and self.rl_model is not None and self.rl_model.is_trained:
             try:
-                # ... код для прогнозирования RL модели ...
-                rl_predictions = np.array([0])  # Действие "держать" по умолчанию
+                # Подготовка входных данных для RL модели
+                if isinstance(X, np.ndarray):
+                    if len(X.shape) == 2:
+                        rl_input = X[-1:]  # Берем только последнюю строку
+                    else:
+                        rl_input = X
+                else:
+                    rl_input = X
+
+                # Получаем прогноз от RL модели
+                rl_predictions = self.rl_model.predict(rl_input)
+
             except Exception as e:
-                logger.error(f"Ошибка при получении прогноза от RL модели: {e}")
+                logger.error(f"Ошибка при получении прогноза от RL модели: {str(e)}")
                 rl_predictions = None
 
         # Получаем прогноз от технической модели
@@ -491,10 +522,24 @@ class HybridModel(BaseModel):
         technical_probas = None
         if hasattr(self, 'technical_model') and self.technical_model is not None and self.technical_model.is_trained:
             try:
-                # ... существующий код для технической модели ...
-                technical_predictions = np.array([0])  # Значение "держать" по умолчанию
+                # Подготовка входных данных для технической модели
+                if isinstance(X, np.ndarray):
+                    if len(X.shape) == 2:
+                        tech_input = X[-1:]  # Берем только последнюю строку
+                    else:
+                        tech_input = X
+                else:
+                    tech_input = X
+
+                # Получаем прогноз от технической модели
+                technical_predictions = self.technical_model.predict(tech_input)
+
+                # Если модель поддерживает прогнозирование вероятностей, получаем их
+                if hasattr(self.technical_model, 'predict_proba'):
+                    technical_probas = self.technical_model.predict_proba(tech_input)
+
             except Exception as e:
-                logger.error(f"Ошибка при получении прогноза от модели технического анализа: {e}")
+                logger.error(f"Ошибка при получении прогноза от модели технического анализа: {str(e)}")
                 technical_predictions = None
                 technical_probas = None
 
@@ -502,8 +547,6 @@ class HybridModel(BaseModel):
         alpha = self.model_params.get("alpha", 0.3)  # Вес для LSTM
         beta = self.model_params.get("beta", 0.4)  # Вес для RL
         gamma = self.model_params.get("gamma", 0.3)  # Вес для технического анализа
-
-        # Оставшийся код для объединения прогнозов остается тем же...
 
         # Проверяем, какие прогнозы доступны, и нормализуем веса
         available_models_count = 0
@@ -531,28 +574,43 @@ class HybridModel(BaseModel):
         # Преобразуем прогнозы в вероятности
         if lstm_predictions is not None:
             # LSTM прогнозирует движение цены, преобразуем в сигналы
-            if lstm_predictions.item() == 1:  # Цена будет расти
-                buy_probability += norm_alpha
-            else:  # Цена будет падать
-                sell_probability += norm_alpha
+            if isinstance(lstm_predictions, np.ndarray) and lstm_predictions.size > 0:
+                if lstm_predictions.item() == 1:  # Цена будет расти
+                    buy_probability += norm_alpha
+                else:  # Цена будет падать
+                    sell_probability += norm_alpha
+            else:
+                # Если lstm_predictions не подходит для извлечения значения, используем сигнал "держать"
+                hold_probability += norm_alpha
 
         if rl_predictions is not None:
             # RL возвращает действия: 0 - держать, 1 - покупать, 2 - продавать
-            if rl_predictions.item() == 0:
+            if isinstance(rl_predictions, np.ndarray) and rl_predictions.size > 0:
+                prediction_value = rl_predictions.item() if rl_predictions.size == 1 else rl_predictions[0]
+                if prediction_value == 0:
+                    hold_probability += norm_beta
+                elif prediction_value == 1:
+                    buy_probability += norm_beta
+                elif prediction_value == 2:
+                    sell_probability += norm_beta
+            else:
+                # Если rl_predictions не подходит для извлечения значения, используем сигнал "держать"
                 hold_probability += norm_beta
-            elif rl_predictions.item() == 1:
-                buy_probability += norm_beta
-            elif rl_predictions.item() == 2:
-                sell_probability += norm_beta
 
         if technical_predictions is not None:
             # Технический анализ возвращает классы: 0 - держать, 1 - покупать, 2 - продавать
-            if technical_predictions.item() == 0:
+            if isinstance(technical_predictions, np.ndarray) and technical_predictions.size > 0:
+                prediction_value = technical_predictions.item() if technical_predictions.size == 1 else \
+                    technical_predictions[0]
+                if prediction_value == 0:
+                    hold_probability += norm_gamma
+                elif prediction_value == 1:
+                    buy_probability += norm_gamma
+                elif prediction_value == 2:
+                    sell_probability += norm_gamma
+            else:
+                # Если technical_predictions не подходит для извлечения значения, используем сигнал "держать"
                 hold_probability += norm_gamma
-            elif technical_predictions.item() == 1:
-                buy_probability += norm_gamma
-            elif technical_predictions.item() == 2:
-                sell_probability += norm_gamma
 
         # Принимаем решение на основе вероятностей
         decision_threshold = self.model_params.get("decision_threshold", 0.5)
@@ -569,9 +627,12 @@ class HybridModel(BaseModel):
                 "buy_probability": buy_probability,
                 "sell_probability": sell_probability,
                 "hold_probability": hold_probability,
-                "lstm_prediction": lstm_predictions.item() if lstm_predictions is not None else None,
-                "rl_prediction": rl_predictions.item() if rl_predictions is not None else None,
-                "technical_prediction": technical_predictions.item() if technical_predictions is not None else None
+                "lstm_prediction": lstm_predictions.item() if lstm_predictions is not None and hasattr(lstm_predictions,
+                                                                                                       'item') else None,
+                "rl_prediction": rl_predictions.item() if rl_predictions is not None and hasattr(rl_predictions,
+                                                                                                 'item') else None,
+                "technical_prediction": technical_predictions.item() if technical_predictions is not None and hasattr(
+                    technical_predictions, 'item') else None
             }
             return np.array([final_prediction]), probabilities
 
@@ -622,6 +683,9 @@ class HybridModel(BaseModel):
         # Создаем копию DataFrame
         result_df = df.copy()
 
+        # Обработка NaN значений перед прогнозированием
+        result_df = result_df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+
         # Добавляем колонки для прогнозов
         result_df['hybrid_signal'] = 0
         result_df['buy_probability'] = 0.0
@@ -648,21 +712,43 @@ class HybridModel(BaseModel):
                 signal_threshold = self.model_params.get("technical_params", {}).get("signal_threshold", 0.5)
 
                 # Применим генерацию технических индикаторов и сигналов
+                # Предварительно обрабатываем NaN-значения
                 enhanced_df = tech_analyzer.generate_trading_signals(
                     df=result_df,
                     strategy=strategy,
                     signal_threshold=signal_threshold
                 )
 
+                # Обработка NaN значений после генерации индикаторов
+                enhanced_df = enhanced_df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+
                 # Обновляем DataFrame, сохраняя индекс
                 result_df = enhanced_df
             except Exception as e:
-                logger.error(f"Ошибка при генерации технических индикаторов: {e}")
+                logger.error(f"Ошибка при генерации технических индикаторов: {str(e)}")
 
         # Проходим по данным и делаем прогнозы
         for i in range(sequence_length, len(result_df)):
             # Получаем последовательность данных
             sequence = result_df.iloc[i - sequence_length:i][feature_columns].values
+
+            # Обработка NaN значений в последовательности
+            if np.isnan(sequence).any():
+                # Заполнение NaN значений
+                for j in range(sequence.shape[1]):
+                    mask = np.isnan(sequence[:, j])
+                    if mask.any():
+                        non_nan = sequence[:, j][~mask]
+                        if len(non_nan) > 0:
+                            # Заполнение предыдущими значениями
+                            sequence[:, j][mask] = np.interp(
+                                np.nonzero(mask)[0],
+                                np.nonzero(~mask)[0],
+                                non_nan
+                            )
+                        else:
+                            # Если все значения NaN, заполняем нулями
+                            sequence[:, j][mask] = 0
 
             try:
                 # Делаем прогноз
@@ -691,8 +777,8 @@ class HybridModel(BaseModel):
                     # Добавляем прогноз
                     result_df.loc[result_df.index[i], 'hybrid_signal'] = prediction.item()
             except Exception as e:
-                logger.error(f"Ошибка при прогнозировании для индекса {i}: {e}")
-                # Продолжаем с следующей итерацией
+                logger.error(f"Ошибка при прогнозировании для индекса {i}: {str(e)}")
+                # Продолжаем со следующей итерацией
 
         # Добавляем столбцы с дискретными сигналами
         result_df['buy_signal'] = (result_df['hybrid_signal'] == 1).astype(int)
