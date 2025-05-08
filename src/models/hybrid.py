@@ -373,13 +373,8 @@ class HybridModel(BaseModel):
             logger.warning(f"Модель {self.name} не обучена полностью, прогноз может быть неточным")
 
         # Проверяем инициализацию всех подмоделей
-        if not hasattr(self, 'lstm_model') or self.lstm_model is None:
-            logger.warning("LSTM модель не инициализирована")
-            lstm_predictions = None
-        elif not hasattr(self.lstm_model, 'is_trained') or not self.lstm_model.is_trained:
-            logger.warning("LSTM модель не обучена")
-            lstm_predictions = None
-        else:
+        lstm_predictions = None
+        if hasattr(self, 'lstm_model') and self.lstm_model is not None and self.lstm_model.is_trained:
             # Используем LSTM модель
             try:
                 # Для LSTM нужна 3D форма данных (samples, sequence_length, features)
@@ -395,31 +390,27 @@ class HybridModel(BaseModel):
                     lstm_input = X
 
                 # Получаем прогноз
-                lstm_predictions = self.lstm_model.predict(lstm_input)
-
-                # Преобразуем прогноз процентного изменения цены в абсолютное значение
                 current_price = X[-1, 0] if len(X.shape) == 2 else X[0, -1, 0]
                 lstm_predictions = self.lstm_model.predict(lstm_input, current_price=current_price)
 
                 # Преобразуем прогноз цены в направление движения
                 if lstm_predictions.shape[0] > 0:
-                    lstm_predictions = (lstm_predictions > X[-1, 0]).astype(int)  # 1 - рост, 0 - падение
+                    lstm_predictions = (lstm_predictions > current_price).astype(int)  # 1 - рост, 0 - падение
 
             except Exception as e:
                 logger.error(f"Ошибка при получении прогноза от LSTM модели: {e}")
                 lstm_predictions = None
-
-        # Аналогичные проверки для RL и технической моделей
-        if not hasattr(self, 'rl_model') or self.rl_model is None:
-            logger.warning("RL модель не инициализирована")
-            rl_predictions = None
-        elif not hasattr(self.rl_model, 'is_trained') or not self.rl_model.is_trained:
-            logger.warning("RL модель не обучена")
-            rl_predictions = None
         else:
+            if not hasattr(self, 'lstm_model') or self.lstm_model is None:
+                logger.warning("LSTM модель не инициализирована")
+            elif not self.lstm_model.is_trained:
+                logger.warning("LSTM модель не обучена")
+
+        # Получаем прогноз от RL модели
+        rl_predictions = None
+        if hasattr(self, 'rl_model') and self.rl_model is not None and self.rl_model.is_trained:
             try:
                 # Код для получения прогноза от RL модели
-                # ... (ваш существующий код)
                 if len(X.shape) == 2:
                     sequence_length = self.model_params.get("sequence_length", 60)
                     if X.shape[0] >= sequence_length:
@@ -431,22 +422,23 @@ class HybridModel(BaseModel):
                 else:
                     rl_input = X
 
-                # Получаем прогноз
-                rl_predictions = self.rl_model.predict(rl_input)
+                # Здесь нужна заглушка, так как RL модель не может предсказывать без окружения
+                # В реальной системе здесь должен быть вызов RL модели
+                rl_predictions = np.array([0])  # Действие "держать" по умолчанию
 
             except Exception as e:
                 logger.error(f"Ошибка при получении прогноза от RL модели: {e}")
                 rl_predictions = None
-
-        if not hasattr(self, 'technical_model') or self.technical_model is None:
-            logger.warning("Техническая модель не инициализирована")
-            technical_predictions = None
-            technical_probas = None
-        elif not hasattr(self.technical_model, 'is_trained') or not self.technical_model.is_trained:
-            logger.warning("Техническая модель не обучена")
-            technical_predictions = None
-            technical_probas = None
         else:
+            if not hasattr(self, 'rl_model') or self.rl_model is None:
+                logger.warning("RL модель не инициализирована")
+            elif not self.rl_model.is_trained:
+                logger.warning("RL модель не обучена")
+
+        # Получаем прогноз от технической модели
+        technical_predictions = None
+        technical_probas = None
+        if hasattr(self, 'technical_model') and self.technical_model is not None and self.technical_model.is_trained:
             try:
                 # Получаем прогноз
                 technical_predictions = self.technical_model.predict(X)
@@ -460,9 +452,11 @@ class HybridModel(BaseModel):
                 logger.error(f"Ошибка при получении прогноза от модели технического анализа: {e}")
                 technical_predictions = None
                 technical_probas = None
-
-        # Далее продолжаем с существующим кодом объединения прогнозов...
-        # ... (ваш существующий код)
+        else:
+            if not hasattr(self, 'technical_model') or self.technical_model is None:
+                logger.warning("Техническая модель не инициализирована")
+            elif not self.technical_model.is_trained:
+                logger.warning("Техническая модель не обучена")
 
         # Объединяем прогнозы
         alpha = self.model_params.get("alpha", 0.3)  # Вес для LSTM

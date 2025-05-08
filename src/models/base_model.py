@@ -206,32 +206,44 @@ class BaseModel(ABC):
                 # Сначала строим пустые подмодели
                 model_instance.build()
 
+                # Импортируем зависимости здесь, чтобы избежать циклических импортов
+                from src.models.technical import TechnicalModel
+                from src.models.lstm import LSTMModel
+                from src.models.reinforcement import RLModel
+
                 # Восстанавливаем техническую модель, если доступна
                 technical_model_path = hybrid_components.get('technical_model_path')
                 if technical_model_path and os.path.exists(technical_model_path):
-                    from src.models.technical import TechnicalModel
                     model_instance.technical_model = TechnicalModel.load(technical_model_path)
 
                 # Восстанавливаем LSTM модель, если доступна
                 lstm_model_path = hybrid_components.get('lstm_model_path')
                 if lstm_model_path and os.path.exists(lstm_model_path):
-                    from src.models.lstm import LSTMModel
                     model_instance.lstm_model = LSTMModel.load(lstm_model_path)
 
                 # Восстанавливаем RL модель, если доступна
                 rl_model_path = hybrid_components.get('rl_model_path')
                 if rl_model_path:
-                    from src.models.reinforcement import RLModel
-                    # Для RL модели может потребоваться специальный метод загрузки
-                    if hasattr(RLModel, 'load_stable_baselines_model'):
-                        model_instance.rl_model = RLModel.load_stable_baselines_model(rl_model_path)
+                    # Проверяем наличие файла модели
+                    if os.path.exists(rl_model_path + ".zip"):
+                        try:
+                            # Создаем экземпляр RL модели
+                            rl_model = RLModel(name=model_instance.name + "_rl",
+                                               model_params=model_instance.model_params.get("rl_params", {}))
+                            # Устанавливаем флаг обученной модели
+                            rl_model.is_trained = True
+                            model_instance.rl_model = rl_model
+                        except Exception as e:
+                            logger.warning(f"Ошибка при загрузке RL модели: {e}")
 
-                # Если сохранены только параметры RL модели
-                rl_model_params = hybrid_components.get('rl_model_params')
-                rl_model_trained = hybrid_components.get('rl_model_trained')
-                if rl_model_params and model_instance.rl_model:
-                    model_instance.rl_model.model_params = rl_model_params
-                    model_instance.rl_model.is_trained = rl_model_trained
+                # Устанавливаем флаг обученной модели для гибридной модели, если хотя бы одна из подмоделей обучена
+                if (hasattr(model_instance,
+                            'technical_model') and model_instance.technical_model and model_instance.technical_model.is_trained) or \
+                        (hasattr(model_instance,
+                                 'lstm_model') and model_instance.lstm_model and model_instance.lstm_model.is_trained) or \
+                        (hasattr(model_instance,
+                                 'rl_model') and model_instance.rl_model and model_instance.rl_model.is_trained):
+                    model_instance.is_trained = True
 
             logger.info(f"Модель {model_instance.name} загружена из {path}")
 

@@ -379,6 +379,26 @@ class TradingSimulator:
             logger.error("Стратегия не задана")
             return {}
 
+        # Проверяем, обучена ли модель (если используется)
+        if self.model is not None and (not hasattr(self.model, 'is_trained') or not self.model.is_trained):
+            logger.error(f"Модель {self.model.name} не обучена или не загружена корректно")
+            # Можно вернуть простые результаты без бэктестинга
+            return {
+                "metrics": {
+                    "initial_balance": self.initial_balance,
+                    "final_balance": self.initial_balance,
+                    "total_return": 0.0,
+                    "total_return_pct": 0.0,
+                    "annual_return": 0.0,
+                    "annual_return_pct": 0.0,
+                    "max_drawdown": 0.0,
+                    "max_drawdown_pct": 0.0,
+                    "total_trades": 0
+                },
+                "trades": [],
+                "data": data
+            }
+
         # Создаем объект для бэктестирования
         backtest_engine = BacktestEngine(
             initial_balance=self.initial_balance,
