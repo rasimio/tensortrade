@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Union, Tuple, Any
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
@@ -176,16 +177,29 @@ class LSTMModel(BaseModel):
             if y_val is not None:
                 y_val = y_val.reshape(y_val.shape[0], -1)
 
+        # Масштабирование целевых значений
+        # Нормализуем целевые значения для предотвращения слишком больших значений loss
+        y_scaler = MinMaxScaler()
+        y_train_scaled = y_scaler.fit_transform(y_train.reshape(-1, 1)).flatten()
+
+        if y_val is not None:
+            y_val_scaled = y_scaler.transform(y_val.reshape(-1, 1)).flatten()
+        else:
+            y_val_scaled = None
+
+        # Сохраняем scaler в метаданных для дальнейшего использования при прогнозировании
+        self.metadata["y_scaler"] = y_scaler
+
         # Формируем данные для валидации
         validation_data = None
-        if X_val is not None and y_val is not None:
-            validation_data = (X_val, y_val)
+        if X_val is not None and y_val_scaled is not None:
+            validation_data = (X_val, y_val_scaled)
 
         # Обучаем модель
         logger.info(f"Начинаем обучение модели {self.name}")
 
         history = self.model.fit(
-            X_train, y_train,
+            X_train, y_train_scaled,
             batch_size=batch_size,
             epochs=epochs,
             validation_data=validation_data,
@@ -205,7 +219,7 @@ class LSTMModel(BaseModel):
         }
 
         # Вычисляем и сохраняем метрики на обучающем наборе
-        train_metrics = self.model.evaluate(X_train, y_train, verbose=0)
+        train_metrics = self.model.evaluate(X_train, y_train_scaled, verbose=0)
         if isinstance(train_metrics, list):
             train_metrics = {
                 metric_name: value
@@ -215,7 +229,7 @@ class LSTMModel(BaseModel):
 
         # Вычисляем и сохраняем метрики на валидационном наборе, если он есть
         if validation_data:
-            val_metrics = self.model.evaluate(X_val, y_val, verbose=0)
+            val_metrics = self.model.evaluate(X_val, y_val_scaled, verbose=0)
             if isinstance(val_metrics, list):
                 val_metrics = {
                     metric_name: value
@@ -257,7 +271,14 @@ class LSTMModel(BaseModel):
                 X = X.reshape(X.shape[0], 1, X.shape[1])
 
         # Делаем прогноз (относительное изменение)
-        pct_change_predictions = self.model.predict(X, **kwargs)
+        scaled_predictions = self.model.predict(X, **kwargs)
+
+        # Обратное масштабирование прогнозов, если у нас есть scaler
+        if "y_scaler" in self.metadata:
+            y_scaler = self.metadata["y_scaler"]
+            pct_change_predictions = y_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten()
+        else:
+            pct_change_predictions = scaled_predictions
 
         # Если передан текущий курс, преобразуем относительное изменение в абсолютную цену
         current_price = kwargs.get('current_price', None)

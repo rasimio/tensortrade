@@ -405,8 +405,11 @@ class TensorTrade:
                 target_column = 'close'
                 prediction_horizon = kwargs.get("prediction_horizon", 1)
 
-                # Используем цены закрытия с задержкой как целевую переменную
-                train_target = train_data[target_column].shift(-prediction_horizon).values[:-prediction_horizon]
+                # Используем изменение цены вместо абсолютных значений
+                # Это помогает с масштабированием
+                pct_changes = train_data[target_column].pct_change().fillna(0).values
+                train_target = pct_changes[sequence_length:sequence_length + len(
+                    pct_changes) - prediction_horizon - sequence_length]
                 train_features = train_data[feature_columns].values[:-prediction_horizon]
             else:
                 train_target = train_data[target_column].values
