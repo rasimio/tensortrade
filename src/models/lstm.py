@@ -72,9 +72,12 @@ class LSTMModel(BaseModel):
         """
         sequence_length = self.model_params.get("sequence_length", 60)
         features_count = len(
-            self.feature_names) if self.feature_names is not None else 92  # Задаем значение по умолчанию
+            self.feature_names) if self.feature_names is not None else 5  # Значение по умолчанию 5 вместо 92
 
         input_shape = (sequence_length, features_count)
+
+        # Проверка и логирование количества признаков
+        logger.info(f"Строится LSTM модель с {features_count} признаками")
 
         model = Sequential()
 

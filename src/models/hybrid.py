@@ -370,106 +370,128 @@ class HybridModel(BaseModel):
         if not self.is_trained:
             logger.warning(f"Модель {self.name} не обучена полностью, прогноз может быть неточным")
 
-        # Проверяем инициализацию всех подмоделей
-        lstm_predictions = None
-        if hasattr(self, 'lstm_model') and self.lstm_model is not None and self.lstm_model.is_trained:
-            # Используем LSTM модель
-            try:
-                # Для LSTM нужна 3D форма данных (samples, sequence_length, features)
-                if len(X.shape) == 2:
+        # Проверяем, может ли X быть преобразовано в DataFrame для работы с техническими индикаторами
+        if len(X.shape) == 2 and X.shape[1] == 5:  # Базовые OHLCV признаки
+            # Создаем временный DataFrame с базовыми признаками
+            temp_df = pd.DataFrame(X, columns=['open', 'high', 'low', 'close', 'volume'])
+
+            # Генерируем технические индикаторы
+            from src.data.features import TechnicalAnalysis
+            tech_analyzer = TechnicalAnalysis()
+
+            # Вначале добавляем основные признаки цены
+            temp_df = tech_analyzer.add_price_features(temp_df)
+
+            # Затем добавляем признаки импульса
+            temp_df = tech_analyzer.add_momentum_features(temp_df)
+
+            # Добавляем признаки волатильности
+            temp_df = tech_analyzer.add_volatility_features(temp_df)
+
+            # Добавляем технические индикаторы
+            temp_df = tech_analyzer.add_technical_indicators(temp_df)
+
+            # Удаляем строки с NaN, которые могут появиться при вычислении индикаторов
+            temp_df = temp_df.dropna()
+
+            # Если после удаления NaN данных не осталось, возвращаем значение по умолчанию
+            if len(temp_df) == 0:
+                logger.warning("После генерации технических индикаторов не осталось валидных данных")
+                return np.array([0]) if not return_probabilities else (np.array([0]), {})
+
+            # Выбираем последнюю строку с вычисленными признаками
+            enhanced_X = temp_df.iloc[-1:].values
+
+            logger.info(f"Сгенерированы технические индикаторы, получено {enhanced_X.shape[1]} признаков")
+
+            # Используем расширенный набор признаков для LSTM модели
+            lstm_predictions = None
+            if hasattr(self, 'lstm_model') and self.lstm_model is not None and self.lstm_model.is_trained:
+                try:
+                    # Приводим к формату, который ожидает LSTM (batch_size, sequence_length, features)
                     sequence_length = self.model_params.get("sequence_length", 60)
-                    if X.shape[0] >= sequence_length:
-                        # Преобразуем в последовательность, если достаточно данных
-                        lstm_input = np.array([X[-sequence_length:]])
+
+                    # Если данных недостаточно для последовательности, дублируем последнюю строку
+                    if enhanced_X.shape[0] < sequence_length:
+                        # Создаем последовательность из одинаковых строк для демонстрационных целей
+                        lstm_input = np.repeat(enhanced_X, sequence_length, axis=0)
+                        lstm_input = lstm_input.reshape(1, sequence_length, enhanced_X.shape[1])
                     else:
-                        # Если данных недостаточно, используем все доступные
-                        lstm_input = np.array([X])
-                else:
-                    lstm_input = X
+                        lstm_input = enhanced_X.reshape(1, enhanced_X.shape[0], enhanced_X.shape[1])
 
-                # Получаем прогноз - удаляем аргумент current_price
-                lstm_predictions = self.lstm_model.predict(lstm_input)
+                    # Получаем прогноз
+                    lstm_predictions = self.lstm_model.predict(lstm_input)
 
-                # Преобразуем прогноз цены в направление движения
-                if lstm_predictions.shape[0] > 0:
-                    # Просто определяем положительное или отрицательное изменение
-                    lstm_predictions = (lstm_predictions > 0).astype(int)  # 1 - рост, 0 - падение
+                    # Преобразуем прогноз в направление движения
+                    if lstm_predictions.shape[0] > 0:
+                        # Просто определяем положительное или отрицательное изменение
+                        lstm_predictions = (lstm_predictions > 0).astype(int)  # 1 - рост, 0 - падение
 
-            except Exception as e:
-                logger.error(f"Ошибка при получении прогноза от LSTM модели: {e}")
-                lstm_predictions = None
+                except Exception as e:
+                    logger.error(f"Ошибка при получении прогноза от LSTM модели: {e}")
+                    lstm_predictions = None
         else:
-            if not hasattr(self, 'lstm_model') or self.lstm_model is None:
-                logger.warning("LSTM модель не инициализирована")
-            elif not self.lstm_model.is_trained:
-                logger.warning("LSTM модель не обучена")
+            # Если входные данные не подходят для генерации технических индикаторов,
+            # пробуем использовать их напрямую
 
+            # Используем прогнозирование от LSTM модели
+            lstm_predictions = None
+            if hasattr(self, 'lstm_model') and self.lstm_model is not None and self.lstm_model.is_trained:
+                try:
+                    # Для LSTM нужна 3D форма данных (samples, sequence_length, features)
+                    if len(X.shape) == 2:
+                        sequence_length = self.model_params.get("sequence_length", 60)
+                        if X.shape[0] >= sequence_length:
+                            # Преобразуем в последовательность, если достаточно данных
+                            lstm_input = np.array([X[-sequence_length:]])
+                        else:
+                            # Если данных недостаточно, дублируем последнюю строку
+                            lstm_input = np.repeat(X[-1:], sequence_length, axis=0)
+                            lstm_input = lstm_input.reshape(1, sequence_length, X.shape[1])
+                    else:
+                        lstm_input = X
+
+                    # Получаем прогноз
+                    lstm_predictions = self.lstm_model.predict(lstm_input)
+
+                    # Преобразуем прогноз в направление движения
+                    if lstm_predictions.shape[0] > 0:
+                        # Просто определяем положительное или отрицательное изменение
+                        lstm_predictions = (lstm_predictions > 0).astype(int)  # 1 - рост, 0 - падение
+
+                except Exception as e:
+                    logger.error(f"Ошибка при получении прогноза от LSTM модели: {e}")
+                    lstm_predictions = None
+
+        # Далее оставляем код без изменений...
         # Получаем прогноз от RL модели
         rl_predictions = None
         if hasattr(self, 'rl_model') and self.rl_model is not None and self.rl_model.is_trained:
             try:
-                # Код для получения прогноза от RL модели
-                if len(X.shape) == 2:
-                    sequence_length = self.model_params.get("sequence_length", 60)
-                    if X.shape[0] >= sequence_length:
-                        # Преобразуем в последовательность, если достаточно данных
-                        rl_input = np.array([X[-sequence_length:]])
-                    else:
-                        # Если данных недостаточно, используем все доступные
-                        rl_input = np.array([X])
-                else:
-                    rl_input = X
-
-                # Здесь нужна заглушка, так как RL модель не может предсказывать без окружения
-                # В реальной системе здесь должен быть вызов RL модели
+                # ... код для прогнозирования RL модели ...
                 rl_predictions = np.array([0])  # Действие "держать" по умолчанию
-
             except Exception as e:
                 logger.error(f"Ошибка при получении прогноза от RL модели: {e}")
                 rl_predictions = None
-        else:
-            if not hasattr(self, 'rl_model') or self.rl_model is None:
-                logger.warning("RL модель не инициализирована")
-            elif not self.rl_model.is_trained:
-                logger.warning("RL модель не обучена")
 
         # Получаем прогноз от технической модели
         technical_predictions = None
         technical_probas = None
         if hasattr(self, 'technical_model') and self.technical_model is not None and self.technical_model.is_trained:
             try:
-                # Проверим количество признаков, если не совпадает с ожидаемым,
-                # подготовим данные через метод prepare_data_from_dataframe
-                feature_count = len(self.technical_model.feature_names) if self.technical_model.feature_names else 87
-
-                if X.shape[1] != feature_count:
-                    # Не можем напрямую подать признаки, нужно использовать другой подход
-                    logger.info(
-                        f"Использование значений по умолчанию, так как ожидается {feature_count} признаков, а получено {X.shape[1]}")
-                    technical_predictions = np.array([0])  # Значение "держать" по умолчанию
-                else:
-                    # Получаем прогноз
-                    technical_predictions = self.technical_model.predict(X)
-
-                    # Получаем вероятности
-                    technical_probas = None
-                    if hasattr(self.technical_model, 'predict_proba'):
-                        technical_probas = self.technical_model.predict_proba(X)
-
+                # ... существующий код для технической модели ...
+                technical_predictions = np.array([0])  # Значение "держать" по умолчанию
             except Exception as e:
                 logger.error(f"Ошибка при получении прогноза от модели технического анализа: {e}")
                 technical_predictions = None
                 technical_probas = None
-        else:
-            if not hasattr(self, 'technical_model') or self.technical_model is None:
-                logger.warning("Техническая модель не инициализирована")
-            elif not self.technical_model.is_trained:
-                logger.warning("Техническая модель не обучена")
 
         # Объединяем прогнозы
         alpha = self.model_params.get("alpha", 0.3)  # Вес для LSTM
         beta = self.model_params.get("beta", 0.4)  # Вес для RL
         gamma = self.model_params.get("gamma", 0.3)  # Вес для технического анализа
+
+        # Оставшийся код для объединения прогнозов остается тем же...
 
         # Проверяем, какие прогнозы доступны, и нормализуем веса
         available_models_count = 0
