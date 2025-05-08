@@ -69,10 +69,11 @@ class LSTMModel(BaseModel):
         """
         Строит модель с заданными параметрами.
         """
-        input_shape = (self.model_params.get("sequence_length", 60), None)
+        sequence_length = self.model_params.get("sequence_length", 60)
+        features_count = len(
+            self.feature_names) if self.feature_names is not None else 92  # Задаем значение по умолчанию
 
-        if self.feature_names is not None:
-            input_shape = (self.model_params.get("sequence_length", 60), len(self.feature_names))
+        input_shape = (sequence_length, features_count)
 
         model = Sequential()
 

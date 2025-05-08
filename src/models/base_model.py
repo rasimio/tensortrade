@@ -98,47 +98,68 @@ class BaseModel(ABC):
         # Создаем директорию, если она не существует
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        # Для гибридной модели нужно сохранить все подмодели
-        if self.__class__.__name__ == 'HybridModel':
-            hybrid_components = {}
-
-            # Сохраняем состояние подмоделей, если они существуют и обучены
-            if hasattr(self, 'lstm_model') and self.lstm_model is not None and self.lstm_model.is_trained:
-                hybrid_components['lstm_model'] = {
-                    "model": self.lstm_model.model,
-                    "is_trained": self.lstm_model.is_trained,
-                    "feature_names": self.lstm_model.feature_names
-                }
-
-            if hasattr(self, 'rl_model') and self.rl_model is not None and self.rl_model.is_trained:
-                hybrid_components['rl_model'] = {
-                    "model": self.rl_model.model,
-                    "is_trained": self.rl_model.is_trained,
-                    "feature_names": self.rl_model.feature_names
-                }
-
-            if hasattr(self,
-                       'technical_model') and self.technical_model is not None and self.technical_model.is_trained:
-                hybrid_components['technical_model'] = {
-                    "model": self.technical_model.model,
-                    "is_trained": self.technical_model.is_trained,
-                    "feature_names": self.technical_model.feature_names
-                }
-        else:
-            hybrid_components = None
-
         # Словарь для сохранения
         save_dict = {
-            "model": self.model,
             "name": self.name,
             "model_params": self.model_params,
             "feature_names": self.feature_names,
             "target_name": self.target_name,
             "is_trained": self.is_trained,
             "metadata": self.metadata,
-            "model_type": self.__class__.__name__,
-            "hybrid_components": hybrid_components
+            "model_type": self.__class__.__name__
         }
+
+        # Для гибридной модели сохраняем состояние подмоделей
+        if self.__class__.__name__ == 'HybridModel':
+            hybrid_components = {}
+
+            # Сохраняем состояние технической модели, если она существует и обучена
+            if hasattr(self,
+                       'technical_model') and self.technical_model is not None and self.technical_model.is_trained:
+                try:
+                    # Сохраняем техническую модель отдельно
+                    technical_model_path = os.path.splitext(path)[0] + "_technical.pkl"
+                    self.technical_model.save(technical_model_path)
+                    hybrid_components['technical_model_path'] = technical_model_path
+                except Exception as e:
+                    logger.warning(f"Не удалось сохранить техническую модель: {e}")
+
+            # Сохраняем состояние LSTM модели, если она существует и обучена
+            if hasattr(self, 'lstm_model') and self.lstm_model is not None and self.lstm_model.is_trained:
+                try:
+                    # Сохраняем LSTM модель отдельно
+                    lstm_model_path = os.path.splitext(path)[0] + "_lstm.pkl"
+                    self.lstm_model.save(lstm_model_path)
+                    hybrid_components['lstm_model_path'] = lstm_model_path
+                except Exception as e:
+                    logger.warning(f"Не удалось сохранить LSTM модель: {e}")
+
+            # Для RL модели, которая часто не может быть сериализована с помощью pickle,
+            # сохраняем только параметры и флаг обучения
+            if hasattr(self, 'rl_model') and self.rl_model is not None and self.rl_model.is_trained:
+                try:
+                    # Сохраняем RL модель через собственный метод, если доступен
+                    if hasattr(self.rl_model, 'save_stable_baselines_model'):
+                        rl_model_path = os.path.splitext(path)[0] + "_rl"
+                        self.rl_model.save_stable_baselines_model(rl_model_path)
+                        hybrid_components['rl_model_path'] = rl_model_path
+                    else:
+                        # Сохраняем только параметры и флаг обучения
+                        hybrid_components['rl_model_params'] = self.rl_model.model_params
+                        hybrid_components['rl_model_trained'] = True
+                except Exception as e:
+                    logger.warning(f"Не удалось сохранить RL модель: {e}")
+                    hybrid_components['rl_model_params'] = self.rl_model.model_params
+                    hybrid_components['rl_model_trained'] = self.rl_model.is_trained
+
+            save_dict["hybrid_components"] = hybrid_components
+        else:
+            # Пытаемся сохранить модель, если это не гибридная модель
+            try:
+                save_dict["model"] = self.model
+            except Exception as e:
+                logger.warning(f"Не удалось сериализовать модель {self.name}: {e}")
+                save_dict["model"] = None
 
         # Сохраняем модель
         try:
@@ -185,25 +206,32 @@ class BaseModel(ABC):
                 # Сначала строим пустые подмодели
                 model_instance.build()
 
-                # Восстанавливаем LSTM модель, если есть
-                if 'lstm_model' in hybrid_components and model_instance.lstm_model is not None:
-                    model_instance.lstm_model.model = hybrid_components['lstm_model'].get('model')
-                    model_instance.lstm_model.is_trained = hybrid_components['lstm_model'].get('is_trained', False)
-                    model_instance.lstm_model.feature_names = hybrid_components['lstm_model'].get('feature_names')
+                # Восстанавливаем техническую модель, если доступна
+                technical_model_path = hybrid_components.get('technical_model_path')
+                if technical_model_path and os.path.exists(technical_model_path):
+                    from src.models.technical import TechnicalModel
+                    model_instance.technical_model = TechnicalModel.load(technical_model_path)
 
-                # Восстанавливаем RL модель, если есть
-                if 'rl_model' in hybrid_components and model_instance.rl_model is not None:
-                    model_instance.rl_model.model = hybrid_components['rl_model'].get('model')
-                    model_instance.rl_model.is_trained = hybrid_components['rl_model'].get('is_trained', False)
-                    model_instance.rl_model.feature_names = hybrid_components['rl_model'].get('feature_names')
+                # Восстанавливаем LSTM модель, если доступна
+                lstm_model_path = hybrid_components.get('lstm_model_path')
+                if lstm_model_path and os.path.exists(lstm_model_path):
+                    from src.models.lstm import LSTMModel
+                    model_instance.lstm_model = LSTMModel.load(lstm_model_path)
 
-                # Восстанавливаем техническую модель, если есть
-                if 'technical_model' in hybrid_components and model_instance.technical_model is not None:
-                    model_instance.technical_model.model = hybrid_components['technical_model'].get('model')
-                    model_instance.technical_model.is_trained = hybrid_components['technical_model'].get('is_trained',
-                                                                                                         False)
-                    model_instance.technical_model.feature_names = hybrid_components['technical_model'].get(
-                        'feature_names')
+                # Восстанавливаем RL модель, если доступна
+                rl_model_path = hybrid_components.get('rl_model_path')
+                if rl_model_path:
+                    from src.models.reinforcement import RLModel
+                    # Для RL модели может потребоваться специальный метод загрузки
+                    if hasattr(RLModel, 'load_stable_baselines_model'):
+                        model_instance.rl_model = RLModel.load_stable_baselines_model(rl_model_path)
+
+                # Если сохранены только параметры RL модели
+                rl_model_params = hybrid_components.get('rl_model_params')
+                rl_model_trained = hybrid_components.get('rl_model_trained')
+                if rl_model_params and model_instance.rl_model:
+                    model_instance.rl_model.model_params = rl_model_params
+                    model_instance.rl_model.is_trained = rl_model_trained
 
             logger.info(f"Модель {model_instance.name} загружена из {path}")
 
