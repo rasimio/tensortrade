@@ -352,12 +352,10 @@ class HybridModel(BaseModel):
             "is_trained": self.is_trained
         }
 
-    def predict(
-            self,
-            X: np.ndarray,
-            return_probabilities: bool = False,
-            **kwargs
-    ) -> Union[np.ndarray, Tuple[np.ndarray, Dict]]:
+    # Исправление для src/models/hybrid.py
+
+    def predict(self, X: np.ndarray, return_probabilities: bool = False, **kwargs) -> Union[
+        np.ndarray, Tuple[np.ndarray, Dict]]:
         """
         Делает прогнозы на основе входных данных.
 
@@ -389,13 +387,13 @@ class HybridModel(BaseModel):
                 else:
                     lstm_input = X
 
-                # Получаем прогноз
-                current_price = X[-1, 0] if len(X.shape) == 2 else X[0, -1, 0]
-                lstm_predictions = self.lstm_model.predict(lstm_input, current_price=current_price)
+                # Получаем прогноз - удаляем аргумент current_price
+                lstm_predictions = self.lstm_model.predict(lstm_input)
 
                 # Преобразуем прогноз цены в направление движения
                 if lstm_predictions.shape[0] > 0:
-                    lstm_predictions = (lstm_predictions > current_price).astype(int)  # 1 - рост, 0 - падение
+                    # Просто определяем положительное или отрицательное изменение
+                    lstm_predictions = (lstm_predictions > 0).astype(int)  # 1 - рост, 0 - падение
 
             except Exception as e:
                 logger.error(f"Ошибка при получении прогноза от LSTM модели: {e}")
@@ -440,13 +438,23 @@ class HybridModel(BaseModel):
         technical_probas = None
         if hasattr(self, 'technical_model') and self.technical_model is not None and self.technical_model.is_trained:
             try:
-                # Получаем прогноз
-                technical_predictions = self.technical_model.predict(X)
+                # Проверим количество признаков, если не совпадает с ожидаемым,
+                # подготовим данные через метод prepare_data_from_dataframe
+                feature_count = len(self.technical_model.feature_names) if self.technical_model.feature_names else 87
 
-                # Получаем вероятности
-                technical_probas = None
-                if hasattr(self.technical_model, 'predict_proba'):
-                    technical_probas = self.technical_model.predict_proba(X)
+                if X.shape[1] != feature_count:
+                    # Не можем напрямую подать признаки, нужно использовать другой подход
+                    logger.info(
+                        f"Использование значений по умолчанию, так как ожидается {feature_count} признаков, а получено {X.shape[1]}")
+                    technical_predictions = np.array([0])  # Значение "держать" по умолчанию
+                else:
+                    # Получаем прогноз
+                    technical_predictions = self.technical_model.predict(X)
+
+                    # Получаем вероятности
+                    technical_probas = None
+                    if hasattr(self.technical_model, 'predict_proba'):
+                        technical_probas = self.technical_model.predict_proba(X)
 
             except Exception as e:
                 logger.error(f"Ошибка при получении прогноза от модели технического анализа: {e}")
@@ -535,6 +543,8 @@ class HybridModel(BaseModel):
 
         return np.array([final_prediction])
 
+    # Исправление для метода predict_from_dataframe в классе HybridModel
+
     def predict_from_dataframe(
             self,
             df: pd.DataFrame,
@@ -587,35 +597,68 @@ class HybridModel(BaseModel):
         # Окно для прогнозирования
         sequence_length = self.model_params.get("sequence_length", 60)
 
+        # Если DataFrame слишком маленький, тогда просто вернем исходный DataFrame
+        if len(result_df) <= sequence_length:
+            logger.warning(f"DataFrame слишком маленький для создания последовательностей: {len(result_df)} строк")
+            return result_df
+
+        # Создаем техническую модель на основе всех доступных признаков, если нужно
+        if self.technical_model and self.technical_model.is_trained:
+            # Используем функцию генерации сигналов с техническим анализом для полного набора данных
+            try:
+                from src.data.features import TechnicalAnalysis
+                tech_analyzer = TechnicalAnalysis()
+
+                # Генерируем торговые сигналы
+                strategy = self.model_params.get("technical_params", {}).get("strategy", "combined")
+                signal_threshold = self.model_params.get("technical_params", {}).get("signal_threshold", 0.5)
+
+                # Применим генерацию технических индикаторов и сигналов
+                enhanced_df = tech_analyzer.generate_trading_signals(
+                    df=result_df,
+                    strategy=strategy,
+                    signal_threshold=signal_threshold
+                )
+
+                # Обновляем DataFrame, сохраняя индекс
+                result_df = enhanced_df
+            except Exception as e:
+                logger.error(f"Ошибка при генерации технических индикаторов: {e}")
+
         # Проходим по данным и делаем прогнозы
         for i in range(sequence_length, len(result_df)):
             # Получаем последовательность данных
             sequence = result_df.iloc[i - sequence_length:i][feature_columns].values
 
-            # Делаем прогноз
-            if return_probabilities:
-                prediction, probabilities = self.predict(sequence, return_probabilities=True)
+            try:
+                # Делаем прогноз
+                if return_probabilities:
+                    prediction, probabilities = self.predict(sequence, return_probabilities=True)
 
-                # Добавляем прогноз и вероятности
-                result_df.loc[result_df.index[i], 'hybrid_signal'] = prediction.item()
-                result_df.loc[result_df.index[i], 'buy_probability'] = probabilities.get("buy_probability", 0.0)
-                result_df.loc[result_df.index[i], 'sell_probability'] = probabilities.get("sell_probability", 0.0)
-                result_df.loc[result_df.index[i], 'hold_probability'] = probabilities.get("hold_probability", 0.0)
+                    # Добавляем прогноз и вероятности
+                    result_df.loc[result_df.index[i], 'hybrid_signal'] = prediction.item()
+                    result_df.loc[result_df.index[i], 'buy_probability'] = probabilities.get("buy_probability", 0.0)
+                    result_df.loc[result_df.index[i], 'sell_probability'] = probabilities.get("sell_probability", 0.0)
+                    result_df.loc[result_df.index[i], 'hold_probability'] = probabilities.get("hold_probability", 0.0)
 
-                # Дополнительно сохраняем прогнозы от каждой подмодели
-                if "lstm_prediction" in probabilities and probabilities["lstm_prediction"] is not None:
-                    result_df.loc[result_df.index[i], 'lstm_prediction'] = probabilities["lstm_prediction"]
+                    # Дополнительно сохраняем прогнозы от каждой подмодели
+                    if "lstm_prediction" in probabilities and probabilities["lstm_prediction"] is not None:
+                        result_df.loc[result_df.index[i], 'lstm_prediction'] = probabilities["lstm_prediction"]
 
-                if "rl_prediction" in probabilities and probabilities["rl_prediction"] is not None:
-                    result_df.loc[result_df.index[i], 'rl_prediction'] = probabilities["rl_prediction"]
+                    if "rl_prediction" in probabilities and probabilities["rl_prediction"] is not None:
+                        result_df.loc[result_df.index[i], 'rl_prediction'] = probabilities["rl_prediction"]
 
-                if "technical_prediction" in probabilities and probabilities["technical_prediction"] is not None:
-                    result_df.loc[result_df.index[i], 'technical_prediction'] = probabilities["technical_prediction"]
-            else:
-                prediction = self.predict(sequence, return_probabilities=False)
+                    if "technical_prediction" in probabilities and probabilities["technical_prediction"] is not None:
+                        result_df.loc[result_df.index[i], 'technical_prediction'] = probabilities[
+                            "technical_prediction"]
+                else:
+                    prediction = self.predict(sequence, return_probabilities=False)
 
-                # Добавляем прогноз
-                result_df.loc[result_df.index[i], 'hybrid_signal'] = prediction.item()
+                    # Добавляем прогноз
+                    result_df.loc[result_df.index[i], 'hybrid_signal'] = prediction.item()
+            except Exception as e:
+                logger.error(f"Ошибка при прогнозировании для индекса {i}: {e}")
+                # Продолжаем с следующей итерацией
 
         # Добавляем столбцы с дискретными сигналами
         result_df['buy_signal'] = (result_df['hybrid_signal'] == 1).astype(int)

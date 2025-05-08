@@ -245,6 +245,8 @@ class LSTMModel(BaseModel):
             "val_metrics": self.metadata.get("val_metrics", {})
         }
 
+    # Исправление для src/models/lstm.py
+
     def predict(self, X: np.ndarray, **kwargs) -> np.ndarray:
         """
         Делает прогнозы на основе входных данных.
@@ -271,7 +273,8 @@ class LSTMModel(BaseModel):
                 X = X.reshape(X.shape[0], 1, X.shape[1])
 
         # Делаем прогноз (относительное изменение)
-        scaled_predictions = self.model.predict(X, **kwargs)
+        scaled_predictions = self.model.predict(X, **{k: v for k, v in kwargs.items()
+                                                      if k not in ['current_price']})
 
         # Обратное масштабирование прогнозов, если у нас есть scaler
         if "y_scaler" in self.metadata:
